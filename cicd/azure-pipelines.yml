@@ -1,0 +1,54 @@
+# Proscan — Azure Pipelines Example
+#
+# Runs SAST scan on pull requests to main.
+# Set proscanUrl and proscanApiToken as pipeline variables.
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  name: 'Self-Hosted'
+
+steps:
+  - checkout: self
+
+  - script: |
+      SCAN_ID=$(curl -sf -X POST "$(proscanUrl)/api/v2/scans" \
+        -H "Authorization: Bearer $(proscanApiToken)" \
+        -H "Content-Type: application/json" \
+        -d '{"type": "sast", "target": "."}' | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+      echo "Scan started: ${SCAN_ID}"
+
+      while true; do
+        STATUS=$(curl -sf "$(proscanUrl)/api/v2/scans/${SCAN_ID}" \
+          -H "Authorization: Bearer $(proscanApiToken)" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+        echo "Status: ${STATUS}"
+        [ "${STATUS}" = "completed" ] && break
+        [ "${STATUS}" = "failed" ] && exit 1
+        sleep 10
+      done
+
+      RESULTS=$(curl -sf "$(proscanUrl)/api/v2/scans/${SCAN_ID}/results" \
+        -H "Authorization: Bearer $(proscanApiToken)")
+
+      CRITICAL=$(echo "${RESULTS}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('critical',0))")
+      HIGH=$(echo "${RESULTS}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('high',0))")
+
+      echo "Critical: ${CRITICAL}, High: ${HIGH}"
+
+      if [ "${CRITICAL}" -gt 0 ] || [ "${HIGH}" -gt 0 ]; then
+        echo "##vso[task.logissue type=error]Security scan found critical or high findings."
+        exit 1
+      fi
+    displayName: 'Proscan SAST'
+    env:
+      proscanUrl: $(PROSCAN_URL)
+      proscanApiToken: $(PROSCAN_API_TOKEN)

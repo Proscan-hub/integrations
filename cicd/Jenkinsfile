@@ -1,0 +1,82 @@
+// Proscan — Jenkins Declarative Pipeline Example
+//
+// Runs SAST scan and fails the build on critical or high findings.
+// Set PROSCAN_URL and PROSCAN_API_TOKEN as Jenkins credentials.
+
+pipeline {
+    agent any
+
+    environment {
+        PROSCAN_URL = credentials('proscan-url')
+        PROSCAN_API_TOKEN = credentials('proscan-api-token')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                script {
+                    def scanResponse = sh(
+                        script: """
+                            curl -sf -X POST "${PROSCAN_URL}/api/v2/scans" \
+                                -H "Authorization: Bearer ${PROSCAN_API_TOKEN}" \
+                                -H "Content-Type: application/json" \
+                                -d '{"type": "sast", "target": "."}'
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    def scanId = readJSON(text: scanResponse).id
+                    echo "Scan started: ${scanId}"
+
+                    def status = 'running'
+                    while (status == 'running' || status == 'queued') {
+                        sleep 10
+                        def statusResponse = sh(
+                            script: """
+                                curl -sf "${PROSCAN_URL}/api/v2/scans/${scanId}" \
+                                    -H "Authorization: Bearer ${PROSCAN_API_TOKEN}"
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        status = readJSON(text: statusResponse).status
+                        echo "Status: ${status}"
+                    }
+
+                    if (status != 'completed') {
+                        error("Scan failed with status: ${status}")
+                    }
+
+                    def resultsResponse = sh(
+                        script: """
+                            curl -sf "${PROSCAN_URL}/api/v2/scans/${scanId}/results" \
+                                -H "Authorization: Bearer ${PROSCAN_API_TOKEN}"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    def results = readJSON(text: resultsResponse)
+                    echo "Findings — Critical: ${results.critical}, High: ${results.high}, Total: ${results.total}"
+
+                    if (results.critical > 0 || results.high > 0) {
+                        error("Quality gate failed: ${results.critical} critical, ${results.high} high severity findings.")
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo 'Security scan found issues. Check Proscan for details.'
+        }
+        success {
+            echo 'Security scan passed.'
+        }
+    }
+}

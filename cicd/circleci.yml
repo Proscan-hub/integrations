@@ -1,0 +1,51 @@
+# Proscan — CircleCI Example
+#
+# Runs SAST scan on every commit to main.
+# Set PROSCAN_URL and PROSCAN_API_TOKEN as project environment variables.
+
+version: 2.1
+
+jobs:
+  security-scan:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: medium
+    steps:
+      - checkout
+      - run:
+          name: Proscan SAST
+          command: |
+            SCAN_ID=$(curl -sf -X POST "${PROSCAN_URL}/api/v2/scans" \
+              -H "Authorization: Bearer ${PROSCAN_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{"type": "sast", "target": "."}' | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+            echo "Scan started: ${SCAN_ID}"
+
+            while true; do
+              STATUS=$(curl -sf "${PROSCAN_URL}/api/v2/scans/${SCAN_ID}" \
+                -H "Authorization: Bearer ${PROSCAN_API_TOKEN}" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+              echo "Status: ${STATUS}"
+              [ "${STATUS}" = "completed" ] && break
+              [ "${STATUS}" = "failed" ] && exit 1
+              sleep 10
+            done
+
+            RESULTS=$(curl -sf "${PROSCAN_URL}/api/v2/scans/${SCAN_ID}/results" \
+              -H "Authorization: Bearer ${PROSCAN_API_TOKEN}")
+
+            CRITICAL=$(echo "${RESULTS}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('critical',0))")
+            HIGH=$(echo "${RESULTS}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('high',0))")
+
+            echo "Critical: ${CRITICAL}, High: ${HIGH}"
+            [ "${CRITICAL}" -gt 0 ] || [ "${HIGH}" -gt 0 ] && exit 1
+
+            echo "Scan passed."
+
+workflows:
+  security:
+    jobs:
+      - security-scan:
+          filters:
+            branches:
+              only: main

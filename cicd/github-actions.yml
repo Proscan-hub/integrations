@@ -1,0 +1,61 @@
+# Proscan — GitHub Actions Example
+#
+# Runs SAST on pull requests and SCA on pushes to main.
+# Requires PROSCAN_URL and PROSCAN_API_TOKEN as repository secrets.
+
+name: Proscan Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sast:
+    name: Static Analysis
+    runs-on: self-hosted
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SAST Scan
+        uses: Proscan-hub/action@v1
+        with:
+          server-url: ${{ secrets.PROSCAN_URL }}
+          api-token: ${{ secrets.PROSCAN_API_TOKEN }}
+          scan-type: sast
+          target: .
+          quality-gate: true
+          severity-threshold: high
+
+  sca:
+    name: Dependency Scan
+    runs-on: self-hosted
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SCA Scan
+        uses: Proscan-hub/action@v1
+        with:
+          server-url: ${{ secrets.PROSCAN_URL }}
+          api-token: ${{ secrets.PROSCAN_API_TOKEN }}
+          scan-type: sca
+          target: .
+          quality-gate: true
+
+  secrets:
+    name: Secrets Scan
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Secrets Scan
+        uses: Proscan-hub/action@v1
+        with:
+          server-url: ${{ secrets.PROSCAN_URL }}
+          api-token: ${{ secrets.PROSCAN_API_TOKEN }}
+          scan-type: secrets
+          target: .
+          severity-threshold: low
